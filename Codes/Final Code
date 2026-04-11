@@ -1,0 +1,138 @@
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <Adafruit_ADXL343.h>
+#include <Adafruit_BMP280.h>
+#include <Adafruit_BME680.h>
+#include <SD.h>
+
+// I2C Bus Pins
+#define I2C_SDA1 8
+#define I2C_SCL1 9
+#define I2C_SDA2 1
+#define I2C_SCL2 2
+
+// Waveshare Reset & SD Pins
+#define OLED_RESET      14
+#define SCREEN_ADDRESS 0x3C
+#define SD_CS          10
+
+// Objects
+Adafruit_SSD1306 display(128, 64, &Wire, OLED_RESET);
+Adafruit_ADXL343 accel = Adafruit_ADXL343(12345);
+Adafruit_BMP280 bmp(&Wire);  
+Adafruit_BME680 bme(&Wire1);  
+
+bool sdStatus = false;
+
+void setup() {
+  // Increased baud rate for faster data output
+  Serial.begin(115200); 
+  
+  Wire.begin(I2C_SDA1, I2C_SCL1);
+  Wire1.begin(I2C_SDA2, I2C_SCL2);
+
+  pinMode(OLED_RESET, OUTPUT);
+  digitalWrite(OLED_RESET, LOW);
+  delay(50);
+  digitalWrite(OLED_RESET, HIGH);
+
+  if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
+    Serial.println("OLED Fail!");
+  }
+
+  if(!accel.begin()) Serial.println("ADXL Fail!");
+  if(!bmp.begin(0x76)) Serial.println("BMP280 Fail!");
+
+  if (bme.begin(0x77)) {
+    bme.setTemperatureOversampling(BME680_OS_8X);
+    bme.setPressureOversampling(BME680_OS_4X);
+    bme.setHumidityOversampling(BME680_OS_2X);
+    bme.setGasHeater(320, 150);
+  } else {
+    Serial.println("BME688 Fail!");
+  }
+
+  // --- SD Initialization with Full Headers ---
+  if (SD.begin(SD_CS)) {
+    Serial.println("SD Card Ready");
+    sdStatus = true;
+
+    // Create file and write headers if it's the first time
+    if (!SD.exists("/datalog.csv")) {
+      File dataFile = SD.open("/datalog.csv", FILE_WRITE);
+      if (dataFile) {
+        dataFile.println("Time(ms),Altitude(m),Pres_BMP(Pa),Pres_BME(Pa),Temp_BMP(C),Temp_BME(C),Humidity(%),Gas(KOhm),Accel_X");
+        dataFile.close();
+      }
+    }
+  } else {
+    Serial.println("SD Card Fail");
+    sdStatus = false;
+  }
+}
+
+void loop() {
+  // --- 1. READ ALL SENSORS ---
+  sensors_event_t event;
+  accel.getEvent(&event);
+  
+  float altitude = bmp.readAltitude(1013.25);
+  float bmpPres  = bmp.readPressure();
+  float bmpTemp  = bmp.readTemperature();
+  
+  float bmePres = 0, bmeTemp = 0, bmeHum = 0, bmeGas = 0;
+  if (bme.performReading()) {
+    bmePres = bme.pressure;
+    bmeTemp = bme.temperature;
+    bmeHum  = bme.humidity;
+    bmeGas  = bme.gas_resistance / 1000.0;
+  }
+
+  // --- 2. SERIAL PRINT ALL PARAMETERS (LIVE MONITORING) ---
+  Serial.print("ALT:");    Serial.print(altitude);
+  Serial.print("m | P1:"); Serial.print(bmpPres);
+  Serial.print(" | P2:"); Serial.print(bmePres);
+  Serial.print(" | T1:"); Serial.print(bmpTemp);
+  Serial.print(" | T2:"); Serial.print(bmeTemp);
+  Serial.print(" | HUM:"); Serial.print(bmeHum);
+  Serial.print("% | GAS:"); Serial.print(bmeGas);
+  Serial.print("K | ACC:"); Serial.print(event.acceleration.x);
+  Serial.print(" | SD:");   Serial.println(sdStatus ? "OK" : "FAIL");
+
+  // --- 3. SD LOGGING ---
+  if (sdStatus) {
+    File dataFile = SD.open("/datalog.csv", FILE_APPEND);
+    if (dataFile) {
+      dataFile.printf("%lu,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n",
+                      millis(), altitude, bmpPres, bmePres, bmpTemp, bmeTemp, bmeHum, bmeGas, event.acceleration.x);
+      dataFile.close();
+    }
+  }
+
+  // --- 4. OLED UPDATE ---
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  display.setTextSize(1);
+  display.setCursor(0, 0);
+  display.print("ALT (m)");
+  display.setCursor(90, 0);
+  display.print(sdStatus ? "[SD]" : "[ERR]");
+  
+  display.drawFastHLine(0, 12, 128, SSD1306_WHITE);
+
+  display.setTextSize(2);
+  display.setCursor(0, 20);
+  display.print(altitude, 1);
+  
+  // Bottom line cycling through pressure
+  display.setTextSize(1);
+  display.setCursor(0, 45);
+  display.print("P1: "); display.print(bmpPres/100, 0); display.print(" hPa");
+  display.setCursor(0, 55);
+  display.print("P2: "); display.print(bmePres/100, 0); display.print(" hPa");
+
+  display.display();
+  
+  delay(500); // 2Hz sampling rate
+}
