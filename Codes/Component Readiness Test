@@ -1,0 +1,117 @@
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <Adafruit_ADXL343.h>
+#include <Adafruit_BMP280.h>
+#include <Adafruit_BME680.h>
+#include <SD.h>
+
+// I2C Bus Pins
+#define I2C_SDA1 8
+#define I2C_SCL1 9
+#define I2C_SDA2 1
+#define I2C_SCL2 2
+
+#define OLED_RESET      14
+#define SCREEN_ADDRESS 0x3C
+#define SD_CS          10
+
+// Objects
+Adafruit_SSD1306 display(128, 64, &Wire, OLED_RESET);
+Adafruit_ADXL343 accel = Adafruit_ADXL343(12345);
+Adafruit_BMP280 bmp(&Wire);  
+Adafruit_BME680 bme(&Wire1);  
+
+// Readiness Flags
+bool status_OLED = false;
+bool status_SD = false;
+bool status_ADXL = false;
+bool status_BMP = false;
+bool status_BME = false;
+
+void setup() {
+  Serial.begin(115200);
+  
+  // Initialize I2C Buses
+  Wire.begin(I2C_SDA1, I2C_SCL1);
+  Wire1.begin(I2C_SDA2, I2C_SCL2);
+
+  // Reset OLED
+  pinMode(OLED_RESET, OUTPUT);
+  digitalWrite(OLED_RESET, LOW); delay(50);
+  digitalWrite(OLED_RESET, HIGH);
+
+  // 1. Check OLED
+  if(display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) status_OLED = true;
+
+  // Initial Boot Screen
+  if(status_OLED) {
+    display.clearDisplay();
+    display.setTextSize(1);
+    display.setTextColor(WHITE);
+    display.setCursor(0,0);
+    display.println("PROJEK KENYALANG");
+    display.println("SYSTEM CHECK...");
+    display.display();
+  }
+
+  // 2. Check ADXL343
+  if(accel.begin()) status_ADXL = true;
+
+  // 3. Check BMP280
+  if(bmp.begin(0x76)) status_BMP = true;
+
+  // 4. Check BME688 (BME680 library)
+  if (bme.begin(0x77)) {
+    status_BME = true;
+    bme.setGasHeater(320, 150);
+  }
+
+  // 5. Check SD Card
+  if (SD.begin(SD_CS)) status_SD = true;
+
+  // Final Serial Summary
+  Serial.println("--- READYNESS REPORT ---");
+  Serial.printf("OLED: %s\n", status_OLED ? "PASS" : "FAIL");
+  Serial.printf("ADXL: %s\n", status_ADXL ? "PASS" : "FAIL");
+  Serial.printf("BMP:  %s\n", status_BMP  ? "PASS" : "FAIL");
+  Serial.printf("BME:  %s\n", status_BME  ? "PASS" : "FAIL");
+  Serial.printf("SD:   %s\n", status_SD   ? "PASS" : "FAIL");
+  delay(2000);
+}
+
+void loop() {
+  display.clearDisplay();
+  display.setCursor(0, 0);
+  display.setTextSize(1);
+  
+  display.println("READYNESS CHECK:");
+  display.drawFastHLine(0, 10, 128, WHITE);
+  
+  // Dynamic Status Rows
+  printStatus("ADXL Accel:", status_ADXL, 15);
+  printStatus("BMP  Pres :", status_BMP, 25);
+  printStatus("BME  Gas  :", status_BME, 35);
+  printStatus("SD   Card :", status_SD, 45);
+
+  // Visual Warning if anything is failed
+  if(!status_ADXL || !status_BMP || !status_BME || !status_SD) {
+    display.setCursor(0, 55);
+    display.print("!!! SYSTEM ERROR !!!");
+  } else {
+    display.setCursor(0, 55);
+    display.print("SYSTEM: READY TO FLY");
+  }
+
+  display.display();
+  delay(1000);
+}
+
+// Helper function to format OLED lines
+void printStatus(String label, bool pass, int y) {
+  display.setCursor(0, y);
+  display.print(label);
+  display.setCursor(85, y);
+  if(pass) display.print("[ OK ]");
+  else     display.print("[FAIL]");
+}
