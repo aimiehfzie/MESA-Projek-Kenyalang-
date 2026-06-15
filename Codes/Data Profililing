@@ -1,0 +1,162 @@
+classdef Projek_Kenyalang < matlab.apps.AppBase
+    % Properties that correspond to app components
+    properties (Access = public)
+        UIFigure          matlab.ui.Figure
+        AnalyzeButton     matlab.ui.control.Button
+        Image             matlab.ui.control.Image
+        GraphContainer    matlab.ui.container.Panel
+        SummaryPanel      matlab.ui.container.Panel
+        PeakAltLabel      matlab.ui.control.Label
+        PeakAltValue      matlab.ui.control.Label
+        MinPresLabel      matlab.ui.control.Label
+        MinPresValue      matlab.ui.control.Label
+    end
+    
+    properties (Access = private)
+        FlightData table 
+    end
+    
+    methods (Access = private)
+        function AnalyzeButtonPushed(app, event)
+            % File Selection
+            [file, path] = uigetfile('*.csv', 'Select Flight Datalog');
+            if isequal(file, 0), return; end
+            
+            % Added 'VariableNamingRule', 'preserve' to retain exact CSV headers
+            app.FlightData = readtable(fullfile(path, file), 'VariableNamingRule', 'preserve');
+            
+            % --- GROUND OFFSET CORRECTION ---
+            app.FlightData.("Altitude(m)") = app.FlightData.("Altitude(m)") - 70;
+            data = app.FlightData;
+            
+            % Calculation for peak markers
+            [peakAlt, peakIdx] = max(data.("Altitude(m)"));
+            minPres = min(data.("Pres_BMP(Pa)")); 
+            time_s = data.("Time(ms)") / 1000;
+            
+            % Update Flight Summary UI
+            app.PeakAltValue.Text = sprintf('%.2f m', peakAlt);
+            app.MinPresValue.Text = sprintf('%.0f Pa', minPres);
+            
+            % Reset Graph Container
+            delete(app.GraphContainer.Children);
+            t = tiledlayout(app.GraphContainer, 3, 3); 
+            t.Padding = 'compact';
+            t.TileSpacing = 'compact';
+            
+            % --- 2D SENSOR PLOTS (TOP 2 ROWS) ---
+            ax1 = nexttile(t);
+            plot(ax1, time_s, data.("Altitude(m)"), 'Color', [0 0.7 0.9], 'LineWidth', 1.5);
+            title(ax1, 'Altitude (m)'); grid(ax1, 'on');
+            
+            ax2 = nexttile(t);
+            plot(ax2, time_s, data.("Pres_BMP(Pa)"), 'r'); hold(ax2, 'on');
+            plot(ax2, time_s, data.("Pres_BME(Pa)"), 'b');
+            title(ax2, 'Pressure (Pa)'); grid(ax2, 'on');
+            
+            ax3 = nexttile(t);
+            plot(ax3, time_s, data.("Temp_BMP(C)"), 'r'); hold(ax3, 'on');
+            plot(ax3, time_s, data.("Temp_BME(C)"), 'b');
+            title(ax3, 'Temp (C)'); grid(ax3, 'on');
+            
+            ax4 = nexttile(t);
+            plot(ax4, time_s, data.("Humidity(%)"), 'Color', [0.2 0.8 0.2]);
+            title(ax4, 'Humidity (%)'); grid(ax4, 'on');
+            
+            ax5 = nexttile(t);
+            plot(ax5, time_s, data.("Gas(KOhm)"), 'Color', [0.6 0.4 0.9]);
+            title(ax5, 'Gas (kOhm)'); grid(ax5, 'on');
+            
+            ax6 = nexttile(t);
+            plot(ax6, time_s, data.("Accel_X"), 'Color', [1 0.5 0]);
+            title(ax6, 'Accel X (G)'); grid(ax6, 'on');
+            
+            % --- FEATURED 3D ATMOSPHERIC COLUMN ---
+            ax3D = nexttile(t, [1 3]); 
+            plot3(ax3D, data.("Temp_BMP(C)"), data.("Pres_BMP(Pa)"), data.("Altitude(m)"), 'LineWidth', 2.5, 'Color', [1 0.4 0]);
+            hold(ax3D, 'on');
+            
+            % Mark Ground Level and Apogee (Peak)
+            plot3(ax3D, data.("Temp_BMP(C)")(1), data.("Pres_BMP(Pa)")(1), data.("Altitude(m)")(1), 'go', 'MarkerFaceColor', 'g'); 
+            plot3(ax3D, data.("Temp_BMP(C)")(peakIdx), data.("Pres_BMP(Pa)")(peakIdx), peakAlt, 'ro', 'MarkerFaceColor', 'r');
+            
+            title(ax3D, '3D ATMOSPHERIC COLUMN: Temp (C) vs Pressure (Pa) vs Altitude (m)', 'Color', 'w');
+            xlabel(ax3D, 'Temperature (C)'); 
+            ylabel(ax3D, 'Pressure (Pa)'); 
+            zlabel(ax3D, 'Altitude (m)');
+            grid(ax3D, 'on');
+            
+            view(ax3D, 135, 30); 
+            ax3D.ZColor = 'w'; ax3D.XColor = 'w'; ax3D.YColor = 'w';
+        end % <--- THIS WAS MISSING AND CAUSING THE ERROR
+    end
+    
+    methods (Access = private)
+        function createComponents(app)
+            app.UIFigure = uifigure('Visible', 'off');
+            app.UIFigure.Position = [50 50 1100 850]; 
+            app.UIFigure.Name = 'Projek Kenyalang - Atmospheric Analysis Suite';
+            app.UIFigure.Color = [0.05 0.05 0.05];
+            app.GraphContainer = uipanel(app.UIFigure);
+            app.GraphContainer.BackgroundColor = [0.05 0.05 0.05];
+            app.GraphContainer.BorderType = 'none';
+            app.GraphContainer.Position = [280 20 800 810];
+            
+            % Mission Statistics Panel
+            app.SummaryPanel = uipanel(app.UIFigure);
+            app.SummaryPanel.Title = 'V1.0 COMPETITION STATS';
+            app.SummaryPanel.BackgroundColor = [0.1 0.1 0.1];
+            app.SummaryPanel.ForegroundColor = [1 1 1];
+            app.SummaryPanel.Position = [20 50 240 250];
+            
+            app.PeakAltLabel = uilabel(app.SummaryPanel);
+            app.PeakAltLabel.Position = [10 180 200 25];
+            app.PeakAltLabel.Text = 'PEAK ALTITUDE:';
+            app.PeakAltLabel.FontColor = [1 1 1];
+            
+            app.PeakAltValue = uilabel(app.SummaryPanel);
+            app.PeakAltValue.Position = [10 140 210 40];
+            app.PeakAltValue.Text = '0.00 m';
+            app.PeakAltValue.FontSize = 28;
+            app.PeakAltValue.FontWeight = 'bold';
+            app.PeakAltValue.FontColor = [0 1 0];
+            app.PeakAltValue.HorizontalAlignment = 'center';
+            
+            app.MinPresLabel = uilabel(app.SummaryPanel);
+            app.MinPresLabel.Position = [10 80 200 20];
+            app.MinPresLabel.Text = 'Min Pressure:';
+            app.MinPresLabel.FontColor = [0.8 0.8 0.8];
+            
+            app.MinPresValue = uilabel(app.SummaryPanel);
+            app.MinPresValue.Position = [10 50 200 30];
+            app.MinPresValue.Text = '--- Pa';
+            app.MinPresValue.FontSize = 18;
+            app.MinPresValue.FontColor = [1 0.4 0.4];
+            
+            % Logo and UI controls
+            app.Image = uiimage(app.UIFigure);
+            app.Image.Position = [10 630 250 200];
+            app.Image.ImageSource = 'Projek Kenyalang.jpeg';
+            
+            app.AnalyzeButton = uibutton(app.UIFigure, 'push');
+            app.AnalyzeButton.ButtonPushedFcn = createCallbackFcn(app, @AnalyzeButtonPushed, true);
+            app.AnalyzeButton.Position = [65 580 140 40];
+            app.AnalyzeButton.Text = 'ANALYSE';
+            app.AnalyzeButton.BackgroundColor = [0.2 0.5 0.8];
+            app.AnalyzeButton.FontColor = [1 1 1];
+            app.UIFigure.Visible = 'on';
+        end
+    end
+    
+    methods (Access = public)
+        function app = Projek_Kenyalang
+            createComponents(app)
+            registerApp(app, app.UIFigure)
+            if nargout == 0, clear app; end
+        end
+        
+        function delete(app)
+            delete(app.UIFigure)
+        end
+    end
+end
