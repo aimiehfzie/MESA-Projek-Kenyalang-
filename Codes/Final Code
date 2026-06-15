@@ -1,4 +1,5 @@
 #include <Wire.h>
+#include <SPI.h> 
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <Adafruit_ADXL343.h>
@@ -6,31 +7,68 @@
 #include <Adafruit_BME680.h>
 #include <SD.h>
 
-// I2C Bus Pins
+// --- PIN DEFINITIONS ---
 #define I2C_SDA1 8
 #define I2C_SCL1 9
-#define I2C_SDA2 1
-#define I2C_SCL2 2
 
-// Waveshare Reset & SD Pins
-#define OLED_RESET      14
+#define SPI_MISO  13
+#define SPI_MOSI  11
+#define SPI_SCK   12
+#define SD_CS     10  
+#define RFM_CS     7  
+
+#define OLED_RESET 14
 #define SCREEN_ADDRESS 0x3C
-#define SD_CS          10
 
-// Objects
-Adafruit_SSD1306 display(128, 64, &Wire, OLED_RESET);
+// --- OBJECTS ---
+Adafruit_SSD1306 display(128, 32, &Wire, OLED_RESET);
 Adafruit_ADXL343 accel = Adafruit_ADXL343(12345);
-Adafruit_BMP280 bmp(&Wire);  
-Adafruit_BME680 bme(&Wire1);  
+Adafruit_BMP280 bmp(&Wire); 
+Adafruit_BME680 bme(&Wire); 
 
 bool sdStatus = false;
+float peakAltitude = -9999.0;
+
+// Dynamic array buffer to assemble sequential unique log names (increased size for longer prefix)
+char filename[25]; 
+
+// --- BITMAP LOGOS (16x16px) ---
+#define LOGO_WIDTH   16
+#define LOGO_HEIGHT  16
+#define LOGO_WIDTH2  32
+
+
+// Logo 1: Previous icon (far right)
+const unsigned char myBitmap [] PROGMEM = {
+  0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xf5, 0xff, 0xf3, 0xff, 0xe7, 0xff, 0xdf, 0xfe, 0xef, 0xfe, 
+  0xef, 0xfd, 0xef, 0xf8, 0xe7, 0xf0, 0xf3, 0xe0, 0xf0, 0x00, 0xf8, 0x00, 0xf8, 0x01, 0xf8, 0x03
+};
+
+// Logo 2: New MESA BW icon (left of the previous icon)
+const unsigned char mesa_bmp [] PROGMEM = {
+	0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 
+	0xe7, 0xb0, 0xc7, 0x9f, 0xe7, 0x30, 0x93, 0x1f, 0xe2, 0x3f, 0x9f, 0x0f, 0xe2, 0x30, 0xc7, 0x4f, 
+	0xe8, 0xbf, 0xf2, 0x6f, 0xe8, 0xbf, 0xf2, 0x67, 0xed, 0xb0, 0x82, 0xe7, 0xff, 0xff, 0xff, 0xff, 
+	0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff
+};
+
 
 void setup() {
-  // Increased baud rate for faster data output
+  delay(500); 
+
   Serial.begin(115200); 
+  while(!Serial) delay(10); 
+  Serial.println("\n--- BOOTING PAYLOAD SYSTEM ---");
   
   Wire.begin(I2C_SDA1, I2C_SCL1);
-  Wire1.begin(I2C_SDA2, I2C_SCL2);
+  
+  pinMode(SD_CS, OUTPUT);
+  pinMode(RFM_CS, OUTPUT);
+  digitalWrite(SD_CS, HIGH);
+  digitalWrite(RFM_CS, HIGH); 
+
+  SPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI, SD_CS);
+  delay(50);
 
   pinMode(OLED_RESET, OUTPUT);
   digitalWrite(OLED_RESET, LOW);
@@ -39,36 +77,52 @@ void setup() {
 
   if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
     Serial.println("OLED Fail!");
+  } else {
+    display.setRotation(2); // Inverted view setup
   }
 
   if(!accel.begin()) Serial.println("ADXL Fail!");
   if(!bmp.begin(0x76)) Serial.println("BMP280 Fail!");
 
-  if (bme.begin(0x77)) {
+  // --- AUTOMATIC FILE INDEXING LOGIC (FlightDataVX format) ---
+  if (SD.begin(SD_CS, SPI, 4000000)) { 
+    Serial.println("SD Card Hardware Ready.");
+    sdStatus = true;
+
+    int fileIndex = 0;
+    while (fileIndex < 1000) {
+      // FIXED: Prefix changed from "/log%d.csv" to "/FlightDataV%d.csv"
+      sprintf(filename, "/FlightDataV%d.csv", fileIndex);
+      if (!SD.exists(filename)) {
+        break; // Found an unused name!
+      }
+      fileIndex++; 
+    }
+
+    Serial.print("Creating unique data log file: ");
+    Serial.println(filename);
+
+    File dataFile = SD.open(filename, FILE_WRITE);
+    if (dataFile) {
+      dataFile.println("Time(ms),Altitude(m),Pres_BMP(Pa),Pres_BME(Pa),Temp_BMP(C),Temp_BME(C),Humidity(%),Gas(KOhm),Accel_X");
+      dataFile.close();
+    } else {
+      Serial.println("Error initializing file header write!");
+    }
+    
+  } else {
+    Serial.println("SD Card Hardware Fail!");
+    sdStatus = false;
+  }
+
+  if (bme.begin(0x77)) { 
     bme.setTemperatureOversampling(BME680_OS_8X);
     bme.setPressureOversampling(BME680_OS_4X);
     bme.setHumidityOversampling(BME680_OS_2X);
     bme.setGasHeater(320, 150);
+    Serial.println("BME680 Ready!");
   } else {
     Serial.println("BME688 Fail!");
-  }
-
-  // --- SD Initialization with Full Headers ---
-  if (SD.begin(SD_CS)) {
-    Serial.println("SD Card Ready");
-    sdStatus = true;
-
-    // Create file and write headers if it's the first time
-    if (!SD.exists("/datalog.csv")) {
-      File dataFile = SD.open("/datalog.csv", FILE_WRITE);
-      if (dataFile) {
-        dataFile.println("Time(ms),Altitude(m),Pres_BMP(Pa),Pres_BME(Pa),Temp_BMP(C),Temp_BME(C),Humidity(%),Gas(KOhm),Accel_X");
-        dataFile.close();
-      }
-    }
-  } else {
-    Serial.println("SD Card Fail");
-    sdStatus = false;
   }
 }
 
@@ -78,19 +132,25 @@ void loop() {
   accel.getEvent(&event);
   
   float altitude = bmp.readAltitude(1013.25);
-  float bmpPres  = bmp.readPressure();
-  float bmpTemp  = bmp.readTemperature();
+  float bmpPres = bmp.readPressure();
+  float bmpTemp = bmp.readTemperature();
   
   float bmePres = 0, bmeTemp = 0, bmeHum = 0, bmeGas = 0;
   if (bme.performReading()) {
     bmePres = bme.pressure;
     bmeTemp = bme.temperature;
-    bmeHum  = bme.humidity;
-    bmeGas  = bme.gas_resistance / 1000.0;
+    bmeHum = bme.humidity;
+    bmeGas = bme.gas_resistance / 1000.0;
   }
 
-  // --- 2. SERIAL PRINT ALL PARAMETERS (LIVE MONITORING) ---
-  Serial.print("ALT:");    Serial.print(altitude);
+  // --- 2. PEAK ALTITUDE TRACKING ---
+  if (altitude > peakAltitude) {
+    peakAltitude = altitude;
+  }
+
+  // --- 3. SERIAL PRINT ---
+  Serial.print("ALT:");   Serial.print(altitude);
+  Serial.print("m | PEAK:"); Serial.print(peakAltitude);
   Serial.print("m | P1:"); Serial.print(bmpPres);
   Serial.print(" | P2:"); Serial.print(bmePres);
   Serial.print(" | T1:"); Serial.print(bmpTemp);
@@ -98,41 +158,53 @@ void loop() {
   Serial.print(" | HUM:"); Serial.print(bmeHum);
   Serial.print("% | GAS:"); Serial.print(bmeGas);
   Serial.print("K | ACC:"); Serial.print(event.acceleration.x);
-  Serial.print(" | SD:");   Serial.println(sdStatus ? "OK" : "FAIL");
+  Serial.print(" | SD:");  Serial.println(sdStatus ? "OK" : "FAIL");
 
-  // --- 3. SD LOGGING ---
+  // --- 4. SD LOGGING TO THE DYNAMIC FILENAME ---
   if (sdStatus) {
-    File dataFile = SD.open("/datalog.csv", FILE_APPEND);
+    File dataFile = SD.open(filename, FILE_APPEND);
     if (dataFile) {
       dataFile.printf("%lu,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n",
-                      millis(), altitude, bmpPres, bmePres, bmpTemp, bmeTemp, bmeHum, bmeGas, event.acceleration.x);
+      millis(), altitude, bmpPres, bmePres, bmpTemp, bmeTemp, bmeHum, bmeGas, event.acceleration.x);
       dataFile.close();
     }
   }
 
-  // --- 4. OLED UPDATE ---
+  // --- 5. RUNNING TIME CALCULATION ---
+  unsigned long totalSeconds = millis() / 1000;
+  unsigned long minutes = totalSeconds / 60;
+  unsigned long seconds = totalSeconds % 60;
+
+  // --- 6. OLED UPDATE ---
   display.clearDisplay();
   display.setTextColor(SSD1306_WHITE);
-  display.setTextSize(1);
-  display.setCursor(0, 0);
-  display.print("ALT (m)");
-  display.setCursor(90, 0);
-  display.print(sdStatus ? "[SD]" : "[ERR]");
-  
-  display.drawFastHLine(0, 12, 128, SSD1306_WHITE);
+  display.setTextSize(1); 
 
-  display.setTextSize(2);
-  display.setCursor(0, 20);
+  // DRAW LOGOS: Side-by-side positioning in the top right
+  display.drawBitmap(80,  0, mesa_bmp, LOGO_WIDTH2, LOGO_HEIGHT, SSD1306_WHITE); // New logo on the left
+  display.drawBitmap(112, 0, myBitmap, LOGO_WIDTH, LOGO_HEIGHT, SSD1306_WHITE); // Original logo on the right
+
+  // Row 1: Current Altitude
+  display.setCursor(0, 0);
+  display.print("Alt:  "); 
   display.print(altitude, 1);
+  display.print(" m");
   
-  // Bottom line cycling through pressure
-  display.setTextSize(1);
-  display.setCursor(0, 45);
-  display.print("P1: "); display.print(bmpPres/100, 0); display.print(" hPa");
-  display.setCursor(0, 55);
-  display.print("P2: "); display.print(bmePres/100, 0); display.print(" hPa");
+  // Row 2: Peak Altitude
+  display.setCursor(0, 12);
+  display.print("Peak: "); 
+  display.print(peakAltitude, 1);
+  display.print(" m");
+
+  // Row 3: SD Card Status AND Running Mission Time side-by-side
+  display.setCursor(0, 24);
+  display.print("SD: ");
+  display.print(sdStatus ? "OK" : "FAIL");
+  
+  display.setCursor(65, 24); 
+  display.printf("T+ %02lu:%02lu", minutes, seconds);
 
   display.display();
   
-  delay(500); // 2Hz sampling rate
+  delay(500); 
 }
