@@ -8,6 +8,8 @@ classdef Projek_Kenyalang < matlab.apps.AppBase
         SummaryPanel      matlab.ui.container.Panel
         PeakAltLabel      matlab.ui.control.Label
         PeakAltValue      matlab.ui.control.Label
+        PeakMslLabel      matlab.ui.control.Label  
+        PeakMslValue      matlab.ui.control.Label  
         MinPresLabel      matlab.ui.control.Label
         MinPresValue      matlab.ui.control.Label
     end
@@ -25,70 +27,115 @@ classdef Projek_Kenyalang < matlab.apps.AppBase
             % Added 'VariableNamingRule', 'preserve' to retain exact CSV headers
             app.FlightData = readtable(fullfile(path, file), 'VariableNamingRule', 'preserve');
             
-            % --- GROUND OFFSET CORRECTION ---
-            app.FlightData.("Altitude(m)") = app.FlightData.("Altitude(m)") - 70;
+            % --- DYNAMIC GROUND LEVEL CALIBRATION ---
+            % 1. Extract raw altitude relative to Sea Level (MSL)
+            alt_msl = app.FlightData.("Altitude(m)");
+            
+            % 2. Automatically grab launchpad altitude from the first recorded data row
+            ground_baseline = alt_msl(1); 
+            
+            % 3. Calculate dynamic Height relative to Ground (AGL)
+            alt_agl = alt_msl - ground_baseline;
+            
+            % Store AGL back into the main dataset table for 3D mapping and consistency
+            app.FlightData.("Altitude(m)") = alt_agl; 
             data = app.FlightData;
             
-            % Calculation for peak markers
-            [peakAlt, peakIdx] = max(data.("Altitude(m)"));
+            % --- APOGEE CALCULATIONS ---
+            [peakAltAgl, peakIdx] = max(alt_agl); % Ground Level Peak (m)
+            peakAltMsl = max(alt_msl);            % Sea Level Peak (m)
             minPres = min(data.("Pres_BMP(Pa)")); 
             time_s = data.("Time(ms)") / 1000;
             
-            % Update Flight Summary UI
-            app.PeakAltValue.Text = sprintf('%.2f m', peakAlt);
+            % --- UNIT CONVERSION FACTOR (m to ft) ---
+            m_to_ft = 3.28084;
+            
+            % Update Flight Summary UI with dual units: meters and [feet]
+            app.PeakAltValue.Text = sprintf('%.2f m (%.1f ft)', peakAltAgl, peakAltAgl * m_to_ft);
+            app.PeakMslValue.Text = sprintf('%.2f m (%.1f ft)', peakAltMsl, peakAltMsl * m_to_ft);
             app.MinPresValue.Text = sprintf('%.0f Pa', minPres);
             
             % Reset Graph Container
             delete(app.GraphContainer.Children);
+            
+            % Ensure the parent container panel maintains its dark color
+            app.GraphContainer.BackgroundColor = [0.05 0.05 0.05];
+            
             t = tiledlayout(app.GraphContainer, 3, 3); 
             t.Padding = 'compact';
             t.TileSpacing = 'compact';
             
+            % Style settings for 2D Plots to achieve Dark Theme
+            darkBg = [0.08 0.08 0.08];     
+            axisColor = [0.8 0.8 0.8];    
+            gridColor = [0.5 0.5 0.5];    
+            
             % --- 2D SENSOR PLOTS (TOP 2 ROWS) ---
             ax1 = nexttile(t);
-            plot(ax1, time_s, data.("Altitude(m)"), 'Color', [0 0.7 0.9], 'LineWidth', 1.5);
-            title(ax1, 'Altitude (m)'); grid(ax1, 'on');
+            plot(ax1, time_s, alt_msl, 'Color', [0.5 0.5 0.5], 'LineStyle', '--', 'LineWidth', 1.2); hold(ax1, 'on');
+            plot(ax1, time_s, alt_agl, 'Color', [0 0.7 0.9], 'LineWidth', 1.8);
+            title(ax1, 'Altitude Profile (m)', 'Color', 'w'); grid(ax1, 'on');
+            app.styleDarkAxis(ax1, darkBg, axisColor, gridColor);
+            lgd1 = legend(ax1, {'Sea Level (MSL)', 'Ground Level (AGL)'}, 'TextColor', 'w', 'Color', darkBg, 'EdgeColor', 'none', 'Location', 'southoutside');
             
             ax2 = nexttile(t);
             plot(ax2, time_s, data.("Pres_BMP(Pa)"), 'r'); hold(ax2, 'on');
             plot(ax2, time_s, data.("Pres_BME(Pa)"), 'b');
-            title(ax2, 'Pressure (Pa)'); grid(ax2, 'on');
+            title(ax2, 'Pressure (Pa)', 'Color', 'w'); grid(ax2, 'on');
+            app.styleDarkAxis(ax2, darkBg, axisColor, gridColor);
+            lgd2 = legend(ax2, {'BMP Sensor', 'BME Sensor'}, 'TextColor', 'w', 'Color', darkBg, 'EdgeColor', 'none');
             
             ax3 = nexttile(t);
             plot(ax3, time_s, data.("Temp_BMP(C)"), 'r'); hold(ax3, 'on');
             plot(ax3, time_s, data.("Temp_BME(C)"), 'b');
-            title(ax3, 'Temp (C)'); grid(ax3, 'on');
+            title(ax3, 'Temp (C)', 'Color', 'w'); grid(ax3, 'on');
+            app.styleDarkAxis(ax3, darkBg, axisColor, gridColor);
+            lgd3 = legend(ax3, {'BMP Sensor', 'BME Sensor'}, 'TextColor', 'w', 'Color', darkBg, 'EdgeColor', 'none');
             
             ax4 = nexttile(t);
             plot(ax4, time_s, data.("Humidity(%)"), 'Color', [0.2 0.8 0.2]);
-            title(ax4, 'Humidity (%)'); grid(ax4, 'on');
+            title(ax4, 'Humidity (%)', 'Color', 'w'); grid(ax4, 'on');
+            app.styleDarkAxis(ax4, darkBg, axisColor, gridColor);
             
             ax5 = nexttile(t);
             plot(ax5, time_s, data.("Gas(KOhm)"), 'Color', [0.6 0.4 0.9]);
-            title(ax5, 'Gas (kOhm)'); grid(ax5, 'on');
+            title(ax5, 'Gas (kOhm)', 'Color', 'w'); grid(ax5, 'on');
+            app.styleDarkAxis(ax5, darkBg, axisColor, gridColor);
             
             ax6 = nexttile(t);
             plot(ax6, time_s, data.("Accel_X"), 'Color', [1 0.5 0]);
-            title(ax6, 'Accel X (G)'); grid(ax6, 'on');
+            title(ax6, 'Accel X (G)', 'Color', 'w'); grid(ax6, 'on');
+            app.styleDarkAxis(ax6, darkBg, axisColor, gridColor);
             
             % --- FEATURED 3D ATMOSPHERIC COLUMN ---
             ax3D = nexttile(t, [1 3]); 
-            plot3(ax3D, data.("Temp_BMP(C)"), data.("Pres_BMP(Pa)"), data.("Altitude(m)"), 'LineWidth', 2.5, 'Color', [1 0.4 0]);
+            plot3(ax3D, data.("Temp_BMP(C)"), data.("Pres_BMP(Pa)"), alt_agl, 'LineWidth', 2.5, 'Color', [1 0.4 0]);
             hold(ax3D, 'on');
             
-            % Mark Ground Level and Apogee (Peak)
-            plot3(ax3D, data.("Temp_BMP(C)")(1), data.("Pres_BMP(Pa)")(1), data.("Altitude(m)")(1), 'go', 'MarkerFaceColor', 'g'); 
-            plot3(ax3D, data.("Temp_BMP(C)")(peakIdx), data.("Pres_BMP(Pa)")(peakIdx), peakAlt, 'ro', 'MarkerFaceColor', 'r');
+            plot3(ax3D, data.("Temp_BMP(C)")(1), data.("Pres_BMP(Pa)")(1), alt_agl(1), 'go', 'MarkerFaceColor', 'g'); 
+            plot3(ax3D, data.("Temp_BMP(C)")(peakIdx), data.("Pres_BMP(Pa)")(peakIdx), peakAltAgl, 'ro', 'MarkerFaceColor', 'r');
             
-            title(ax3D, '3D ATMOSPHERIC COLUMN: Temp (C) vs Pressure (Pa) vs Altitude (m)', 'Color', 'w');
-            xlabel(ax3D, 'Temperature (C)'); 
-            ylabel(ax3D, 'Pressure (Pa)'); 
-            zlabel(ax3D, 'Altitude (m)');
+            title(ax3D, '3D ATMOSPHERIC COLUMN: Temp (C) vs Pressure (Pa) vs Altitude (m AGL)', 'Color', 'w');
+            xlabel(ax3D, 'Temperature (C)', 'Color', 'w'); 
+            ylabel(ax3D, 'Pressure (Pa)', 'Color', 'w'); 
+            zlabel(ax3D, 'Altitude (m AGL)', 'Color', 'w');
             grid(ax3D, 'on');
             
+            lgd3D = legend(ax3D, {'Flight Path', 'Ground Level', 'Apogee (Peak)'}, 'TextColor', 'w', 'Color', darkBg, 'EdgeColor', 'none', 'Location', 'northeast');
+            
             view(ax3D, 135, 30); 
-            ax3D.ZColor = 'w'; ax3D.XColor = 'w'; ax3D.YColor = 'w';
-        end % <--- THIS WAS MISSING AND CAUSING THE ERROR
+            ax3D.Color = darkBg;
+            ax3D.XColor = 'w'; ax3D.YColor = 'w'; ax3D.ZColor = 'w';
+            ax3D.GridColor = 'w'; ax3D.GridAlpha = 0.15;
+        end 
+        
+        function styleDarkAxis(~, ax, bgColor, axisColor, gridColor)
+            ax.Color = bgColor;
+            ax.XColor = axisColor;
+            ax.YColor = axisColor;
+            ax.GridColor = gridColor;
+            ax.GridAlpha = 0.2; 
+        end
     end
     
     methods (Access = private)
@@ -102,33 +149,49 @@ classdef Projek_Kenyalang < matlab.apps.AppBase
             app.GraphContainer.BorderType = 'none';
             app.GraphContainer.Position = [280 20 800 810];
             
-            % Mission Statistics Panel
+            % Mission Statistics Panel (Widened to 260px to accommodate double units)
             app.SummaryPanel = uipanel(app.UIFigure);
             app.SummaryPanel.Title = 'V1.0 COMPETITION STATS';
             app.SummaryPanel.BackgroundColor = [0.1 0.1 0.1];
             app.SummaryPanel.ForegroundColor = [1 1 1];
-            app.SummaryPanel.Position = [20 50 240 250];
+            app.SummaryPanel.Position = [10 50 260 310]; 
             
+            % 1. Ground Level Apogee UI components (AGL)
             app.PeakAltLabel = uilabel(app.SummaryPanel);
-            app.PeakAltLabel.Position = [10 180 200 25];
-            app.PeakAltLabel.Text = 'PEAK ALTITUDE:';
+            app.PeakAltLabel.Position = [10 245 240 25];
+            app.PeakAltLabel.Text = 'PEAK ALTITUDE (AGL):';
             app.PeakAltLabel.FontColor = [1 1 1];
             
             app.PeakAltValue = uilabel(app.SummaryPanel);
-            app.PeakAltValue.Position = [10 140 210 40];
-            app.PeakAltValue.Text = '0.00 m';
-            app.PeakAltValue.FontSize = 28;
+            app.PeakAltValue.Position = [5 210 250 40];
+            app.PeakAltValue.Text = '0.00 m (0.0 ft)';
+            app.PeakAltValue.FontSize = 20; % Font slightly lowered to keep text on one line
             app.PeakAltValue.FontWeight = 'bold';
-            app.PeakAltValue.FontColor = [0 1 0];
+            app.PeakAltValue.FontColor = [0 1 0]; 
             app.PeakAltValue.HorizontalAlignment = 'center';
             
+            % 2. Sea Level Apogee UI components (MSL)
+            app.PeakMslLabel = uilabel(app.SummaryPanel);
+            app.PeakMslLabel.Position = [10 165 240 25];
+            app.PeakMslLabel.Text = 'PEAK ALTITUDE (MSL):';
+            app.PeakMslLabel.FontColor = [0.8 0.8 0.8];
+            
+            app.PeakMslValue = uilabel(app.SummaryPanel);
+            app.PeakMslValue.Position = [5 130 250 40];
+            app.PeakMslValue.Text = '0.00 m (0.0 ft)';
+            app.PeakMslValue.FontSize = 20; 
+            app.PeakMslValue.FontWeight = 'bold';
+            app.PeakMslValue.FontColor = [0 0.8 1]; 
+            app.PeakMslValue.HorizontalAlignment = 'center';
+            
+            % 3. Pressure UI components
             app.MinPresLabel = uilabel(app.SummaryPanel);
-            app.MinPresLabel.Position = [10 80 200 20];
+            app.MinPresLabel.Position = [10 75 240 20];
             app.MinPresLabel.Text = 'Min Pressure:';
             app.MinPresLabel.FontColor = [0.8 0.8 0.8];
             
             app.MinPresValue = uilabel(app.SummaryPanel);
-            app.MinPresValue.Position = [10 50 200 30];
+            app.MinPresValue.Position = [10 45 240 30];
             app.MinPresValue.Text = '--- Pa';
             app.MinPresValue.FontSize = 18;
             app.MinPresValue.FontColor = [1 0.4 0.4];
